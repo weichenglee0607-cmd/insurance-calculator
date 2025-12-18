@@ -1,2 +1,4 @@
 pandas
 xlsxwriter
+pdfplumber
+plotly
