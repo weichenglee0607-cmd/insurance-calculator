@@ -5,7 +5,6 @@ import google.generativeai as genai
 import plotly.graph_objects as go
 
 # --- 1. 安全讀取 AI API Key ---
-# 優先讀取 Secrets，若無則留空
 API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 
 if API_KEY:
@@ -16,16 +15,22 @@ else:
 
 st.set_page_config(page_title="AI 聯網保單診斷系統", layout="wide")
 
-# --- 2. AI 聯網判讀引擎 ---
+# --- 2. AI 聯網判讀引擎 (針對重傷優化) ---
 def ai_classify(product_name):
-    """聯網查詢險種並回傳類別"""
+    """聯網查詢險種並回傳類別，優先判讀重大傷病"""
     if not product_name or not API_KEY:
         return "待辨識"
     try:
-        prompt = f"你是一位台灣保險專家。請判斷險種名稱「{product_name}」屬於：壽險、意外、醫療、重疾、長照 哪一類？請只回傳類別名稱（兩個字），不要解釋。"
+        # 強調「重傷」的判讀邏輯
+        prompt = f"""
+        你是一位台灣保險經紀人。請判斷險種名稱「{product_name}」屬於哪一類保障？
+        可選類別：壽險、意外、醫療、重傷、長照。
+        注意：如果險種與重大傷病、癌症、重大疾病、特定傷病相關，請統一歸類為「重傷」。
+        請只回傳類別名稱（兩個字），不要解釋。
+        """
         response = model.generate_content(prompt)
         res = response.text.strip()
-        for cat in ["壽險", "意外", "醫療", "重疾", "長照"]:
+        for cat in ["壽險", "意外", "醫療", "重傷", "長照"]:
             if cat in res: return cat
         return "其他"
     except:
@@ -34,7 +39,7 @@ def ai_classify(product_name):
 # --- 3. 初始化數據 ---
 if 'main_df' not in st.session_state:
     st.session_state['main_df'] = pd.DataFrame([
-        {"姓名": "客戶姓名", "險種名稱": "範例險種(如:10HRL)", "類別": "長照", "保費": 0, "理賠": 0}
+        {"姓名": "新客戶", "險種名稱": "範例:重大傷病定期保險", "類別": "重傷", "保費": 0, "理賠": 0}
     ])
 
 # --- 4. 側邊欄 ---
@@ -49,19 +54,16 @@ with st.sidebar:
 # --- 5. 模式 1：資料錄入 ---
 if mode == "1. 資料錄入":
     df = st.session_state['main_df']
-    name = df['姓名'].iloc[0] if not df.empty else "客戶"
+    name = df['姓名'].iloc[0] if not df.empty and '姓名' in df.columns else "新客戶"
     st.header(f"📝 {name} 的保單明細表")
 
-    # 匯入與 AI 聯網判讀
     if uploaded_file:
-        if st.button("🚀 啟動 AI 聯網自動分類"):
+        if st.button("🚀 啟動 AI 聯絡辨識與載入"):
             raw_df = pd.read_excel(uploaded_file)
-            # 自動找尋包含「名稱」或「險種」的欄位
             name_col = next((c for c in raw_df.columns if "名稱" in c or "險種" in c), raw_df.columns[0])
             
-            with st.spinner("AI 正在網路上抓取資料判讀中..."):
+            with st.spinner("AI 正在針對 重大傷病 與其他保障進行聯網判讀..."):
                 raw_df['險種名稱'] = raw_df[name_col]
-                # 核心：AI 逐筆聯網辨識
                 raw_df['類別'] = raw_df['險種名稱'].apply(ai_classify)
             
             # 清理金額欄位
@@ -71,19 +73,17 @@ if mode == "1. 資料錄入":
                     raw_df[col] = pd.to_numeric(raw_df[target].astype(str).str.replace(r'[^\d.]', '', regex=True), errors='coerce').fillna(0)
             
             st.session_state['main_df'] = raw_df
-            st.success("AI 聯網判讀完成！")
+            st.success("AI 辨識完成（已將重大傷病納入判讀核心）！")
             st.rerun()
 
-    # 表格編輯
     edited_df = st.data_editor(st.session_state['main_df'], num_rows="dynamic", use_container_width=True)
     st.session_state['main_df'] = edited_df
 
-# --- 6. 模式 2：診斷報告 ---
+# --- 6. 模式 2：診斷報告 (重傷版) ---
 elif mode == "2. 診斷報告":
     df = st.session_state['main_df']
-    st.header(f"📊 專業保障診斷報告")
+    st.header(f"📊 專業保障診斷報告 (重傷優化版)")
     
-    # 數值匯總
     total_p = df.get("保費", pd.Series([0])).sum()
     total_b = df.get("理賠", pd.Series([0])).sum()
     
@@ -92,11 +92,21 @@ elif mode == "2. 診斷報告":
     c2.metric("預估總保障", f"{total_b:,.0f} 萬元")
     c3.metric("目前年齡", f"{st.session_state['age']} 歲")
     
-    # 雷達圖
     st.divider()
-    cats = ["壽險", "意外", "醫療", "重疾", "長照"]
+    # 雷達圖標籤已改為 重傷
+    cats = ["壽險", "意外", "醫療", "重傷", "長照"]
     vals = [df[df['類別'] == c]["理賠"].sum() if '類別' in df.columns else 0 for c in cats]
     
-    fig = go.Figure(data=go.Scatterpolar(r=vals, theta=cats, fill='toself'))
-    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, max(vals)*1.2 if max(vals)>0 else 100])))
-    st.plotly_chart(fig, use_container_width=True)
+    l, r = st.columns([1.2, 1])
+    with l:
+        fig = go.Figure(data=go.Scatterpolar(r=vals, theta=cats, fill='toself', line_color='#E44D26'))
+        fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, max(vals)*1.2 if max(vals)>0 else 100])), showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+
+    with r:
+        st.subheader("💡 專家診斷建議")
+        for label, v in zip(cats, vals):
+            if v == 0: st.error(f"❌ **{label}缺口**")
+            elif label == "重傷" and v < 100: st.warning(f"⚠️ **{label}偏低** (建議重大傷病至少備足 100 萬)")
+            elif v < 100: st.warning(f"⚠️ **{label}偏低**")
+            else: st.success(f"✅ **{label}充足**")
