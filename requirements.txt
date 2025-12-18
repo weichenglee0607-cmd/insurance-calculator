@@ -3,3 +3,4 @@ xlsxwriter
 pdfplumber
 plotly
 Pillow
+openpyxl
