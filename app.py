@@ -5,7 +5,7 @@ import io
 # 網頁基礎配置
 st.set_page_config(page_title="專業保單診斷系統", layout="wide")
 
-st.title("🛡️ 專業保單診斷系統 (Excel 存檔版)")
+st.title("🛡️ 專業保單診斷系統")
 
 # --- 初始化 Session State (確保資料在切換分頁時不會消失) ---
 if 'current_df' not in st.session_state:
