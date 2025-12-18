@@ -7,13 +7,16 @@ from PIL import Image
 
 st.set_page_config(page_title="AI 專業保單診斷系統", layout="wide")
 
-# --- 初始化表格結構 (預設包含核心欄位) ---
+# --- 1. 核心初始化邏輯 ---
+# 定義標準欄位名稱
+STD_COLS = ["姓名", "險種名稱", "類別", "保費 (年繳)", "預估理賠額 (萬)", "期滿 (民國)"]
+
 if 'current_df' not in st.session_state:
     st.session_state['current_df'] = pd.DataFrame([
-        {"姓名": "張曉明", "險種名稱": "範例保單", "類別": "醫療", "保費 (年繳)": 0, "預估理賠額 (萬)": 0, "期滿 (民國)": 113}
+        {"姓名": "新客戶", "險種名稱": "範例保單", "類別": "醫療", "保費 (年繳)": 0, "預估理賠額 (萬)": 0, "期滿 (民國)": 113}
     ])
 
-# --- 側邊欄：基本設定與檔案載入 ---
+# --- 2. 側邊欄配置 ---
 with st.sidebar:
     st.header("👤 基本資料設定")
     st.session_state['c_age'] = st.number_input("投保年齡", value=st.session_state.get('c_age', 27))
@@ -26,11 +29,11 @@ with st.sidebar:
     st.divider()
     mode = st.radio("功能切換：", ["1. 資料錄入與對照", "2. 產出理賠診斷報告"])
 
-# --- 模式 1：資料錄入 ---
+# --- 3. 模式 1：資料錄入 ---
 if mode == "1. 資料錄入與對照":
-    # 這裡的邏輯：標題優先抓取表格第一行的姓名
-    df_input = st.session_state['current_df']
-    current_name = df_input['姓名'].iloc[0] if '姓名' in df_input.columns else "新客戶"
+    # 安全抓取姓名，避免 IndexError
+    df_temp = st.session_state['current_df']
+    current_name = df_temp['姓名'].iloc[0] if not df_temp.empty and '姓名' in df_temp.columns else "新客戶"
     
     st.header(f"📝 {current_name} 的保單明細表")
     
@@ -39,11 +42,11 @@ if mode == "1. 資料錄入與對照":
         st.session_state['current_df'],
         num_rows="dynamic",
         use_container_width=True,
-        key="editor_final_v1"
+        key="editor_final_stable"
     )
     st.session_state['current_df'] = edited_df
     
-    # 下載按鈕 (檔名連動)
+    # 下載按鈕
     if not edited_df.empty:
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -56,13 +59,21 @@ if mode == "1. 資料錄入與對照":
         )
 
     st.divider()
-    st.subheader("🔍 參考視窗")
     if uploaded_file:
         f_type = uploaded_file.name.split('.')[-1].lower()
         if f_type == 'xlsx':
             if st.button("✅ 確認載入 Excel 資料"):
-                st.session_state['current_df'] = pd.read_excel(uploaded_file)
-                st.rerun()
+                try:
+                    loaded_df = pd.read_excel(uploaded_file)
+                    # 自動補齊缺失欄位，防止後續報錯
+                    for col in STD_COLS:
+                        if col not in loaded_df.columns:
+                            loaded_df[col] = "" if col == "姓名" or col == "險種名稱" or col == "類別" else 0
+                    st.session_state['current_df'] = loaded_df
+                    st.success("資料載入成功！")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"讀取失敗：{e}")
         elif f_type == 'pdf':
             with pdfplumber.open(uploaded_file) as pdf:
                 text = "".join([page.extract_text() for page in pdf.pages])
@@ -70,31 +81,28 @@ if mode == "1. 資料錄入與對照":
         elif f_type in ['png', 'jpg', 'jpeg']:
             st.image(Image.open(uploaded_file), use_container_width=True)
 
-# --- 模式 2：診斷報告 (修復 KeyError) ---
+# --- 4. 模式 2：診斷報告 (徹底解決 KeyError & IndexError) ---
 elif mode == "2. 產出理賠診斷報告":
     df = st.session_state['current_df'].copy()
     
-    # 關鍵防錯：強制統一欄位名稱
-    rename_map = {
-        "保費 (年繳)": "保費",
-        "保費": "保費",
-        "預估理賠額 (萬)": "理賠",
-        "理賠": "理賠"
-    }
-    # 檢查並重新命名現有欄位
-    new_cols = {c: rename_map[c] for c in df.columns if c in rename_map}
-    df.rename(columns=new_cols, inplace=True)
-    
-    # 定義報告抬頭名字 (修正 KeyError: '客戶')
-    report_name = df['姓名'].iloc[0] if '姓名' in df.columns else "客戶"
-    
-    if "保費" not in df.columns:
-        st.warning("⚠️ 找不到『保費』相關欄位，請檢查表格標題是否正確。")
+    if df.empty:
+        st.warning("⚠️ 表格內無資料，請先返回第一頁輸入。")
     else:
-        st.header(f"📊 {report_name} 專屬保障診斷報告")
+        # 自動校準欄位名稱
+        col_map = {
+            "保費 (年繳)": "保費", "保費": "保費",
+            "預估理賠額 (萬)": "理賠", "理賠": "理賠"
+        }
+        df.rename(columns={c: v for c, v in col_map.items() if c in df.columns}, inplace=True)
         
-        # 數值清理
-        df["保費"] = pd.to_numeric(df["保費"], errors='coerce').fillna(0)
+        # 安全讀取姓名
+        r_name = df['姓名'].iloc[0] if '姓名' in df.columns else "客戶"
+        t_gender = "先生" if st.session_state['c_gender'] == "男" else "小姐"
+        
+        st.header(f"📊 {r_name} {t_gender} 專屬保障診斷報告")
+        
+        # 數值轉換與清理
+        df["保費"] = pd.to_numeric(df.get("保費", 0), errors='coerce').fillna(0)
         df["理賠"] = pd.to_numeric(df.get("理賠", 0), errors='coerce').fillna(0)
         
         total_p = df["保費"].sum()
@@ -110,14 +118,13 @@ elif mode == "2. 產出理賠診斷報告":
         l_col, r_col = st.columns([1.2, 1])
         with l_col:
             cats = ["壽險", "意外", "醫療", "重疾", "長照"]
-            # 確保類別欄位存在
             if '類別' in df.columns:
                 vals = [df[df['類別'] == c]['理賠'].sum() for c in cats]
                 fig = go.Figure(data=go.Scatterpolar(r=vals, theta=cats, fill='toself'))
                 fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, max(vals)*1.2 if max(vals)>0 else 100])))
                 st.plotly_chart(fig, use_container_width=True)
             else:
-                st.info("請在表格中填寫『類別』以繪製雷達圖。")
+                st.error("表格缺少『類別』欄位，無法產出圖表。")
 
         with r_col:
             st.subheader("💡 診斷建議")
