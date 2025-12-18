@@ -10,6 +10,7 @@ st.set_page_config(page_title="AI 專業保單診斷系統", layout="wide")
 # --- 側邊欄：基本資料與檔案載入 ---
 with st.sidebar:
     st.header("👤 客戶基本資料")
+    # 這裡的輸入會儲存在 session_state['c_name'] 中，並與下方標題連動
     st.session_state['c_name'] = st.text_input("客戶姓名", value=st.session_state.get('c_name', "新客戶"))
     st.session_state['c_age'] = st.number_input("投保年齡", value=st.session_state.get('c_age', 27))
     st.session_state['c_gender'] = st.selectbox("性別", ["男", "女"], index=0 if st.session_state.get('c_gender') == "男" else 1)
@@ -27,15 +28,15 @@ if 'current_df' not in st.session_state:
 
 # --- 模式 1：資料錄入 ---
 if mode == "1. 資料錄入與對照":
-    st.header(f"📝 正在建立 {st.session_state['c_name']} 的保單明細")
+    # 修正重點：這裡的標題會根據 st.session_state['c_name'] 動態變化
+    st.header(f"📝 正在建立 {st.session_state['c_name']} 的保單明細表")
     
-    # 上方：超寬編輯區
-    st.subheader("📋 編輯區")
+    # 編輯區
     edited_df = st.data_editor(
         st.session_state['current_df'],
         num_rows="dynamic",
         use_container_width=True,
-        key="editor_v7"
+        key="editor_final"
     )
     st.session_state['current_df'] = edited_df
     
@@ -76,10 +77,10 @@ elif mode == "2. 產出理賠診斷報告":
         st.warning("⚠️ 請先在錄入頁面輸入資料。")
     else:
         t_gender = "先生" if st.session_state['c_gender'] == "男" else "小姐"
-        # 修正後的標題列
+        # 報告頁面的標題也會同步
         st.header(f"📊 {st.session_state['c_name']} {t_gender} ({st.session_state['c_age']}歲) 保障診斷報告")
         
-        # 數據統計
+        # (其餘報告代碼保持不變...)
         total_p = df["保費"].sum()
         total_benefit = pd.to_numeric(df["預估理賠額(萬)"], errors='coerce').sum()
         
@@ -90,7 +91,6 @@ elif mode == "2. 產出理賠診斷報告":
 
         st.divider()
         
-        # 診斷內容
         l_col, r_col = st.columns([1.2, 1])
         with l_col:
             cats = ["壽險", "意外", "醫療", "重疾", "長照"]
