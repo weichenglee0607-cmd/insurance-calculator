@@ -1,97 +1,85 @@
 import streamlit as st
 import pandas as pd
 import io
+import pdfplumber
+import plotly.graph_objects as go
 
-# 網頁基礎配置
-st.set_page_config(page_title="專業保單診斷系統", layout="wide")
+st.set_page_config(page_title="AI 保單分析診斷系統", layout="wide")
 
-st.title("🛡️ 專業保單診斷系統")
+# --- 核心邏輯：PDF 解析 ---
+def parse_insurance_pdf(file):
+    with pdfplumber.open(file) as pdf:
+        full_text = ""
+        for page in pdf.pages:
+            full_text += page.extract_text()
+    
+    # 這裡可以加入更複雜的規則來抓取特定欄位，目前先做文字快照
+    st.sidebar.success("PDF 讀取成功！")
+    return full_text
 
-# --- 初始化 Session State (確保資料在切換分頁時不會消失) ---
+# --- 初始化資料 ---
 if 'current_df' not in st.session_state:
-    st.session_state['current_df'] = pd.DataFrame(columns=["險種名稱", "保額/單位", "保費", "期滿(民國)"])
-if 'client_name' not in st.session_state:
-    st.session_state['client_name'] = "新客戶"
+    st.session_state['current_df'] = pd.DataFrame(columns=["險種名稱", "類別", "保費"])
 
-# --- 側邊欄：功能選單 ---
+# --- 側邊欄 ---
 with st.sidebar:
-    st.header("📂 客戶資料管理")
-    mode = st.radio("功能選擇：", ["1. 載入與輸入資料", "2. 查看診斷報告"])
-    
-    st.divider()
-    # 範例資料 (吳小姐)
-    if st.button("載入吳先生範本資料"):
-        sample_data = {
-            "險種名稱": ["LTN 長照終身", "ADE 意外失能", "AHI 意外住院", "HSME 醫療實支(E)", "OMR 意外實支", "SDCA 重大傷病", "WP 豁免附約"],
-            "保額/單位": ["10,000", "1,000,000", "20單位", "1單位", "100,000", "2,000,000", "-"],
-            "保費": [25930, 980, 1100, 21159, 1974, 14400, 1028],
-            "期滿(民國)": [143, 164, 164, 169, 164, 123, 143]
-        }
-        st.session_state['current_df'] = pd.DataFrame(sample_data)
-        st.session_state['client_name'] = "吳○君"
-        st.rerun()
+    st.header("🤖 AI 助手")
+    uploaded_pdf = st.file_uploader("上傳客戶保單 PDF", type="pdf")
+    if uploaded_pdf:
+        pdf_content = parse_insurance_pdf(uploaded_pdf)
+        st.expander("查看 PDF 原始文字").write(pdf_content)
+        st.info("💡 目前已具備讀取能力，您可以根據左側文字手動快速填入右側表格。")
 
-# --- 模式 1：載入與輸入資料 ---
-if mode == "1. 載入與輸入資料":
-    st.header("👤 客戶資料錄入")
-    
-    col_name, col_upload = st.columns([1, 1])
-    with col_name:
-        st.session_state['client_name'] = st.text_input("輸入新客戶姓名", value=st.session_state['client_name'])
-    
-    with col_upload:
-        # 讀取舊客戶 Excel
-        uploaded_file = st.file_uploader("📂 從 iPad 上傳舊客戶 Excel 檔", type="xlsx")
-        if uploaded_file is not None:
-            st.session_state['current_df'] = pd.read_excel(uploaded_file)
-            st.success("✅ 已讀取舊客戶存檔")
+    mode = st.radio("導覽：", ["資料輸入", "保障雷達圖分析"])
 
-    st.divider()
-    st.subheader("📝 編輯保單明細")
-    st.info("提示：直接在下方表格修改數值，或點擊表格底部 '+' 號新增險種。")
+# --- 模式 1：資料輸入 (包含類別欄位) ---
+if mode == "資料輸入":
+    st.header("📝 保單明細錄入")
+    # 定義險種大類，用於雷達圖
+    categories = ["壽險", "意外", "醫療", "重疾", "長照"]
     
-    # 動態表格編輯器
+    # 如果表格是空的，預設給一些欄位
+    if st.session_state['current_df'].empty:
+        st.session_state['current_df'] = pd.DataFrame([
+            {"險種名稱": "範例保單", "類別": "醫療", "保費": 5000}
+        ])
+
     edited_df = st.data_editor(
-        st.session_state['current_df'], 
-        num_rows="dynamic", 
-        use_container_width=True,
-        key="main_editor"
+        st.session_state['current_df'],
+        num_rows="dynamic",
+        use_container_width=True
     )
     st.session_state['current_df'] = edited_df
 
-    # 存檔按鈕
-    if not st.session_state['current_df'].empty:
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            st.session_state['current_df'].to_excel(writer, index=False, sheet_name='保單明細')
-        
-        st.download_button(
-            label=f"💾 儲存並下載 {st.session_state['client_name']} 的 Excel 檔案",
-            data=output.getvalue(),
-            file_name=f"{st.session_state['client_name']}_保單資料.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-# --- 模式 2：查看診斷報告 ---
-elif mode == "2. 產出分析報告":
+# --- 模式 2：保障雷達圖 ---
+elif mode == "保障雷達圖分析":
+    st.header("🕸️ 保障缺口雷達圖")
     df = st.session_state['current_df']
-    if df.empty:
-        st.warning("⚠️ 目前尚無資料，請先至「1. 載入與輸入資料」進行填寫。")
-    else:
-        st.header(f"📊 {st.session_state['client_name']} 的保障分析報告")
+    
+    if not df.empty and "類別" in df.columns:
+        # 根據類別統計保費占比（作為保障強度指標）
+        radar_data = df.groupby("類別")["保費"].sum().reset_index()
         
-        total_p = df["保費"].sum()
-        c1, c2, c3 = st.columns(3)
-        c1.metric("年度保費總計", f"{total_p:,} 元")
-        c2.metric("月繳預估負擔", f"{int(total_p/12):,} 元")
-        c3.metric("保單總項數", f"{len(df)} 項")
-        
-        st.divider()
-        
-        tab_chart, tab_table = st.tabs(["📈 保費占比分析", "📄 原始資料核對"])
-        with tab_chart:
-            st.bar_chart(df.set_index("險種名稱")["保費"])
-        with tab_table:
-            st.dataframe(df, use_container_width=True)
+        # 確保所有類別都出現，即使金額為 0
+        all_cats = ["壽險", "意外", "醫療", "重疾", "長照"]
+        values = []
+        for cat in all_cats:
+            val = radar_data[radar_data['類別'] == cat]['保費'].sum()
+            values.append(val)
 
-        st.caption("💡 建議：談完後點擊左側「1. 載入與輸入資料」底部的儲存按鈕，將檔案保留在 iPad 中。")
+        # 畫雷達圖
+        fig = go.Figure(data=go.Scatterpolar(
+          r=values,
+          theta=all_cats,
+          fill='toself',
+          name='保障強度'
+        ))
+
+        fig.update_layout(
+          polar=dict(radialaxis=dict(visible=True, range=[0, max(values) if max(values)>0 else 10000])),
+          showlegend=False
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        st.write("💡 數值越高代表該項目的投入預算（保障強度）越高。")
+    else:
+        st.warning("請先在輸入頁面設定『類別』與『保費』")
