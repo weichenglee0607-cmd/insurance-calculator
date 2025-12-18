@@ -1,6 +1,5 @@
+streamlit
 pandas
-xlsxwriter
-pdfplumber
+google-generativeai
 plotly
-Pillow
 openpyxl
